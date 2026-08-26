@@ -541,7 +541,8 @@ def show_diff(hunks: List[Hunk]):
 
 # --- File System Application Logic ---
 def apply_hunks(hunks: List[Hunk], comments: List[str] = None, dry_run: bool = False, interactive: bool = False):
-    """Applies parsed hunks to the filesystem."""
+    """Applies parsed hunks to the filesystem.
+    Returns dict of backups made: {filepath: backup_path}."""
     patch_comment = ""
     if comments:
         info("Comments:")
@@ -671,12 +672,13 @@ def apply_hunks(hunks: List[Hunk], comments: List[str] = None, dry_run: bool = F
                     warn(f"File not found: {hunk.path}", filepaths=[hunk.path])
             else:
                 try:
-                    backup_path = create_backup(hunk.path)
-                    if backup_path:
-                        backups_made[hunk.path] = backup_path
                     with open(hunk.path, "r") as f:
                         original = f.read()
                     new = apply_changes(original, hunk.chunks, hunk.path)
+                    # Бэкап создаём только после успешного apply_changes
+                    backup_path = create_backup(hunk.path)
+                    if backup_path:
+                        backups_made[hunk.path] = backup_path
                     if hunk.move_path:
                         os.makedirs(os.path.dirname(hunk.move_path) or ".", exist_ok=True)
                         with open(hunk.move_path, "w") as f:
@@ -721,8 +723,6 @@ def apply_hunks(hunks: List[Hunk], comments: List[str] = None, dry_run: bool = F
             color_print(f"{p}", Colors.CYAN)
         if not dry_run:
             summary_parts = []
-            if patch_comment:
-                summary_parts.append(f"Comment: {patch_comment}")
             if added:
                 summary_parts.append(f"Added: {', '.join(added)}")
             if modified:
@@ -732,12 +732,12 @@ def apply_hunks(hunks: List[Hunk], comments: List[str] = None, dry_run: bool = F
             if backups_made:
                 backups_list = ", ".join(f"{k} -> {v}" for k, v in backups_made.items())
                 summary_parts.append(f"Backups: {backups_list}")
-            log_action("PATCH_APPLIED", " | ".join(summary_parts))
+            log_action("SUCCESS: PATCH_APPLIED", " | ".join(summary_parts))
     else:
         if dry_run:
             warn("No changes.")
-        else:
-            warn("No changes.")
+
+    return backups_made
 
 
 def apply_changes(original_content: str, chunks: List[ChangeChunk], file_path: str) -> str:
@@ -1106,7 +1106,7 @@ def apply_single_patch(
             # Красим имена файлов в описании
             filepaths_in_desc = []
             for hunk in hunks:
-                hpath = getattr(hunk, 'path', '')
+                hpath = getattr(hunk, "path", "")
                 if hpath and hpath in desc:
                     filepaths_in_desc.append(hpath)
             if filepaths_in_desc:
@@ -1133,7 +1133,7 @@ def apply_single_patch(
                 # Красим все вхождения имён файлов из hunks
                 filepaths_in_issue = []
                 for hunk in hunks:
-                    hpath = getattr(hunk, 'path', '')
+                    hpath = getattr(hunk, "path", "")
                     if hpath and hpath in issue:
                         filepaths_in_issue.append(hpath)
                 if filepaths_in_issue:
@@ -1162,14 +1162,16 @@ def apply_single_patch(
         message = f"In {patch_name}: {e}"
         message = colorize_files(message, all_paths)
         print(message, file=sys.stderr)
-        log_action("ERROR", f"{patch_name}: {e}")
+        # Логируем FAIL
+        fail_details = f"{patch_name}: {e}"
+        log_action("FAIL: NO_ACTION", f"{fail_details} | Backups: NONE")
         return False
     except Exception as e:
         color_print("Error: ", Colors.RED, file=sys.stderr, end="")
         message = f"In {patch_name}: Unexpected error: {e}"
         message = colorize_files(message, [patch_name])
         print(message, file=sys.stderr)
-        log_action("ERROR", f"{patch_name}: Unexpected: {e}")
+        log_action("FAIL: NO_ACTION", f"{patch_name}: Unexpected: {e} | Backups: NONE")
         return False
 
 
